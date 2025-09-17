@@ -1,2 +1,4 @@
 discord.py==2.4.0
 python-dotenv>=1.0.0
+yt-dlp>=2023.12.20
+spotipy>=2.22.0
