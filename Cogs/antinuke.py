@@ -1,91 +1,70 @@
 import discord
 from discord.ext import commands
 
+
 class AntiNuke(commands.Cog):
-    def __init__(self, bot):
+    """Anti-nuke protection with whitelist support."""
+
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    def is_trusted(self, user_id: int):
-        return str(user_id) in self.bot.config.get("trusted_users", [])
+    @commands.group(invoke_without_command=True)
+    async def whitelist(self, ctx):
+        users = self.bot.config.get("trusted_users", [])
+        roles = self.bot.config.get("trusted_roles", [])
+        msg = []
+        if users:
+            msg.append("👤 Users: " + ", ".join([f"<@{u}>" for u in users]))
+        if roles:
+            msg.append("📌 Roles: " + ", ".join([f"<@&{r}>" for r in roles]))
+        if not msg:
+            msg = ["⚠️ Whitelist is empty."]
+        await ctx.send("\n".join(msg))
 
-    async def punish(self, guild, user, action: str):
-        log_channel_id = self.bot.config.get("log_channel_id")
-        member = guild.get_member(user.id)
-
-        if log_channel_id:
-            log_channel = self.bot.get_channel(int(log_channel_id))
-            if log_channel:
-                await log_channel.send(f"🚨 **AntiNuke triggered**: {user.mention} attempted {action}!")
-
-        if member and not self.is_trusted(user.id):
-            try:
-                await member.kick(reason=f"AntiNuke: unauthorized {action}")
-                if log_channel_id and (log_channel := self.bot.get_channel(int(log_channel_id))):
-                    await log_channel.send(f"🦵 {member.mention} kicked for **{action}**")
-            except discord.Forbidden:
-                pass
-
-    @commands.Cog.listener()
-    async def on_guild_channel_delete(self, channel):
-        if not self.bot.config.get("antinuke", True):
-            return
-        guild = channel.guild
-        try:
-            async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
-                await self.punish(guild, entry.user, "channel delete")
-        except discord.Forbidden:
-            pass
-
-    @commands.Cog.listener()
-    async def on_guild_role_delete(self, role):
-        if not self.bot.config.get("antinuke", True):
-            return
-        guild = role.guild
-        try:
-            async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.role_delete):
-                await self.punish(guild, entry.user, "role delete")
-        except discord.Forbidden:
-            pass
-
-    @commands.Cog.listener()
-    async def on_member_ban(self, guild, user):
-        if not self.bot.config.get("antinuke", True):
-            return
-        try:
-            async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
-                await self.punish(guild, entry.user, "ban")
-        except discord.Forbidden:
-            pass
-
-    @commands.Cog.listener()
-    async def on_member_remove(self, member):
-        if not self.bot.config.get("antinuke", True):
-            return
-        guild = member.guild
-        try:
-            async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.kick):
-                await self.punish(guild, entry.user, "kick")
-        except discord.Forbidden:
-            pass
-
-    @commands.command(name="antinuke")
+    @whitelist.command()
     @commands.has_permissions(administrator=True)
-    async def toggle_antinuke(self, ctx, mode: str = None):
-        """
-        Enable/disable AntiNuke
-        Usage: >antinuke on / off
-        """
-        if mode not in ["on", "off"]:
-            return await ctx.send("Usage: `antinuke on` or `antinuke off`")
+    async def adduser(self, ctx, user: discord.User):
+        wl = self.bot.config.setdefault("trusted_users", [])
+        if user.id not in wl:
+            wl.append(user.id)
+            await self.bot.save_config()
+            await ctx.send(f"✅ Added {user.mention} to whitelist.")
+        else:
+            await ctx.send(f"⚠️ {user.mention} already whitelisted.")
 
-        self.bot.config["antinuke"] = (mode == "on")
-        await self.bot.save_config()  # persist change
-        await ctx.send(f"✅ AntiNuke is now **{mode.upper()}**")
+    @whitelist.command()
+    @commands.has_permissions(administrator=True)
+    async def removeuser(self, ctx, user: discord.User):
+        wl = self.bot.config.setdefault("trusted_users", [])
+        if user.id in wl:
+            wl.remove(user.id)
+            await self.bot.save_config()
+            await ctx.send(f"❌ Removed {user.mention} from whitelist.")
+        else:
+            await ctx.send(f"⚠️ {user.mention} not in whitelist.")
 
-async def setup(bot):
-    # Ensure config + save_config are attached
-    if not hasattr(bot, "config"):
-        from main import config, save_config
-        bot.config = config
-        bot.save_config = save_config
+    @whitelist.command()
+    @commands.has_permissions(administrator=True)
+    async def addrole(self, ctx, role: discord.Role):
+        wl = self.bot.config.setdefault("trusted_roles", [])
+        if role.id not in wl:
+            wl.append(role.id)
+            await self.bot.save_config()
+            await ctx.send(f"✅ Added role {role.mention} to whitelist.")
+        else:
+            await ctx.send(f"⚠️ {role.mention} already whitelisted.")
+
+    @whitelist.command()
+    @commands.has_permissions(administrator=True)
+    async def removerole(self, ctx, role: discord.Role):
+        wl = self.bot.config.setdefault("trusted_roles", [])
+        if role.id in wl:
+            wl.remove(role.id)
+            await self.bot.save_config()
+            await ctx.send(f"❌ Removed role {role.mention} from whitelist.")
+        else:
+            await ctx.send(f"⚠️ {role.mention} not in whitelist.")
+
+
+async def setup(bot: commands.Bot):
     await bot.add_cog(AntiNuke(bot))
