@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# main.py — entrypoint for MetaSonic (designed for Python 3.12)
+# main.py — MetaSonic entrypoint (Python 3.12)
 
 import os
 import json
@@ -12,16 +12,15 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
-# --- basic logging ---
+# --- logging ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-# --- env & config paths ---
+# --- env & config ---
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 CONFIG_PATH = Path("my_config.json")
 COGS_DIR = Path("./cogs")
 
-# --- default config (will be written if missing) ---
 DEFAULT_CONFIG = {
     "owner_id": 123456789012345678,
     "default_prefix": ">",
@@ -31,21 +30,16 @@ DEFAULT_CONFIG = {
     "trusted_users": []
 }
 
-# Ensure config exists
 if not CONFIG_PATH.exists():
-    logging.info("my_config.json missing — creating default")
     CONFIG_PATH.write_text(json.dumps(DEFAULT_CONFIG, indent=4))
 
-# Load config
 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     config = json.load(f)
 
-# Async lock to protect writes
 _save_lock = asyncio.Lock()
 
 
 async def save_config():
-    """Safely write config to disk."""
     async with _save_lock:
         tmp = CONFIG_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(config, indent=4), encoding="utf-8")
@@ -53,52 +47,50 @@ async def save_config():
         logging.info("Config saved")
 
 
-# Prefix resolver (per-guild prefix support)
 def get_prefix(bot, message):
-    # DM fallback -> default prefix
     if not message.guild:
         return config.get("default_prefix", ">")
-    guild_id = str(message.guild.id)
-    return config.get("guild_prefixes", {}).get(guild_id, config.get("default_prefix", ">"))
+    return config.get("guild_prefixes", {}).get(str(message.guild.id), config.get("default_prefix", ">"))
 
 
-# Full intents as requested
 intents = discord.Intents.all()
+bot = commands.Bot(
+    command_prefix=lambda bot, msg: commands.when_mentioned_or(get_prefix(bot, msg))(bot, msg),
+    intents=intents,
+    help_command=commands.DefaultHelpCommand()
+)
 
-bot = commands.Bot(command_prefix=get_prefix, intents=intents, help_command=commands.DefaultHelpCommand())
+# attach config and save to bot
+bot.config = config
+bot.save_config = save_config
 
-# --- Basic events & error handling ---
+# --- events ---
 @bot.event
 async def on_ready():
-    logging.info(f"✅ Logged in as: {bot.user} (ID: {bot.user.id})")
+    logging.info(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
     logging.info(f"Guild count: {len(bot.guilds)}")
 
 
 @bot.event
 async def on_command_error(ctx, error):
-    # Handle common errors gracefully
     if isinstance(error, commands.MissingPermissions):
-        await ctx.reply("You don't have permission to run this command.", mention_author=False)
+        await ctx.reply("You don't have permission.", mention_author=False)
         return
     if isinstance(error, commands.CommandNotFound):
         return
-    # Unhandled: log and reply
-    logging.error("Unhandled command error:\n" + "".join(traceback.format_exception(type(error), error, error.__traceback__)))
+    logging.error("Unhandled error:\n" + "".join(traceback.format_exception(type(error), error, error.__traceback__)))
     try:
-        await ctx.reply("An internal error occurred. The owner has been notified.", mention_author=False)
+        await ctx.reply("An internal error occurred.", mention_author=False)
     except Exception:
         pass
 
-
-# --- Admin prefix commands (per-guild) ---
+# --- basic commands ---
 @bot.command(name="setprefix")
 @commands.has_permissions(administrator=True)
 async def set_prefix(ctx, new_prefix: str):
-    guild_id = str(ctx.guild.id)
-    config.setdefault("guild_prefixes", {})[guild_id] = new_prefix
+    config.setdefault("guild_prefixes", {})[str(ctx.guild.id)] = new_prefix
     await save_config()
-    await ctx.reply(f"✅ Prefix set to `{new_prefix}` for this server.", mention_author=False)
-
+    await ctx.reply(f"✅ Prefix set to `{new_prefix}`.", mention_author=False)
 
 @bot.command(name="resetprefix")
 @commands.has_permissions(administrator=True)
@@ -111,47 +103,46 @@ async def reset_prefix(ctx):
     else:
         await ctx.reply("Nothing to reset — using default prefix.", mention_author=False)
 
+@bot.command(name="clear", aliases=["purge"])
+@commands.has_permissions(manage_messages=True)
+async def clear_messages(ctx, amount: int = 10):
+    if amount < 1:
+        await ctx.reply("Enter a valid number.", mention_author=False)
+        return
+    deleted = await ctx.channel.purge(limit=amount + 1)
+    await ctx.send(f"🧹 Deleted {len(deleted)-1} messages.", delete_after=5)
 
-# --- Extension (cog) loader ---
+
+# --- load cogs ---
 async def load_all_cogs():
     failed = []
     if not COGS_DIR.exists():
-        logging.warning("No cogs/ directory found.")
+        logging.warning("No cogs/ folder found.")
         return failed
 
-    for file in sorted(COGS_DIR.iterdir()):
-        if file.suffix != ".py":
-            continue
+    for file in sorted(COGS_DIR.glob("*.py")):
         if file.name.startswith("_"):
-            # skip private/internal files
             continue
         ext_name = f"cogs.{file.stem}"
         try:
-            logging.info(f"Loading extension {ext_name} ...")
-            # use await so async setup() in cogs is supported
             await bot.load_extension(ext_name)
-            logging.info(f"Loaded {ext_name}")
+            logging.info(f"✅ Loaded {ext_name}")
         except Exception as exc:
-            logging.exception(f"Failed to load {ext_name}: {exc}")
+            logging.error(f"❌ Failed to load {ext_name}: {exc}")
             failed.append({"ext": ext_name, "error": str(exc)})
     return failed
 
 
-# --- Startup / main ---
+# --- main ---
 async def main():
     if not TOKEN:
-        logging.critical("DISCORD_TOKEN missing in environment (.env). Exiting.")
+        logging.critical("DISCORD_TOKEN missing!")
         return
-
     async with bot:
         failed = await load_all_cogs()
         if failed:
-            logging.error("Some cogs failed to load: %s", failed)
-        try:
-            await bot.start(TOKEN)
-        except Exception:
-            logging.exception("Error while running bot")
-            raise
+            logging.error("Some cogs failed: %s", failed)
+        await bot.start(TOKEN)
 
 
 if __name__ == "__main__":
