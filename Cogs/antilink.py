@@ -1,60 +1,45 @@
 import discord
 from discord.ext import commands
-import re
-import asyncio
 
-invite_regex = re.compile(r"(https?:\/\/)?(www\.)?(discord\.gg|discord\.com\/invite)\/[a-zA-Z0-9]+")
+class Logs(commands.Cog):
+    """Logs join/leave and deleted messages."""
 
-class AntiLink(commands.Cog):
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.Cog.listener()
-    async def on_message(self, message: discord.Message):
-        if message.author.bot or not message.guild:
-            return
+    def get_log_channel(self, guild: discord.Guild):
+        channel_id = self.bot.config.get("log_channel_id")
+        if channel_id:
+            return guild.get_channel(channel_id)
+        return None
 
-        # Check AntiLink status from config
-        if not self.bot.config.get("anti_invite", True):
-            return
-
-        if invite_regex.search(message.content) or "http" in message.content:
-            try:
-                await message.delete()
-            except discord.Forbidden:
-                return
-
-            warn_msg = await message.channel.send(
-                f"🚫 {message.author.mention}, links are not allowed!"
-            )
-            await warn_msg.delete(delay=5)
-
-            log_channel_id = self.bot.config.get("log_channel_id")
-            if log_channel_id:
-                log_channel = self.bot.get_channel(int(log_channel_id))
-                if log_channel:
-                    await log_channel.send(
-                        f"🚨 **AntiLink triggered**: {message.author.mention} tried posting `{message.content}`"
-                    )
-
-    @commands.command(name="antilink")
+    @commands.command()
     @commands.has_permissions(administrator=True)
-    async def toggle_antilink(self, ctx, mode: str = None):
-        """
-        Enable/disable AntiLink
-        Usage: >antilink on / off
-        """
-        if mode not in ["on", "off"]:
-            return await ctx.send("Usage: `antilink on` or `antilink off`")
+    async def setlog(self, ctx, channel: discord.TextChannel):
+        self.bot.config["log_channel_id"] = channel.id
+        await self.bot.save_config()
+        await ctx.send(f"✅ Log channel set to {channel.mention}")
 
-        self.bot.config["anti_invite"] = (mode == "on")
-        await self.bot.save_config()  # persist change
-        await ctx.send(f"✅ AntiLink is now **{mode.upper()}**")
+    @commands.Cog.listener()
+    async def on_member_join(self, member):
+        channel = self.get_log_channel(member.guild)
+        if channel:
+            await channel.send(f"📥 {member.mention} joined.")
 
-async def setup(bot):
-    # Attach config + save_config from main.py if not already
-    if not hasattr(bot, "config"):
-        from main import config, save_config
-        bot.config = config
-        bot.save_config = save_config
-    await bot.add_cog(AntiLink(bot))
+    @commands.Cog.listener()
+    async def on_member_remove(self, member):
+        channel = self.get_log_channel(member.guild)
+        if channel:
+            await channel.send(f"📤 {member.mention} left.")
+
+    @commands.Cog.listener()
+    async def on_message_delete(self, message):
+        if message.author.bot or message.guild is None:
+            return
+        channel = self.get_log_channel(message.guild)
+        if channel:
+            await channel.send(f"🗑️ Deleted message by {message.author.mention}: {message.content}")
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Logs(bot))
