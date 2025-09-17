@@ -1,8 +1,9 @@
 {
-    "owner_id": 1382098097164783667,
+    "owner_id": 123456789012345678,
     "default_prefix": ">",
     "guild_prefixes": {},
     "log_channel_id": null,
     "trusted_roles": [],
-    "trusted_users": []
+    "trusted_users": [],
+    "anti_invite": true
 }
