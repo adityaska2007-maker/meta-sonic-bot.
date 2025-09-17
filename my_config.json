@@ -5,5 +5,16 @@
     "log_channel_id": null,
     "trusted_roles": [],
     "trusted_users": [],
-    "anti_invite": true
+    "anti_invite": true,
+    "antinuke": true,
+    "antiraid": true,
+    "antispam": true,
+    "raid": {
+        "window": 10,
+        "max_joins": 4
+    },
+    "spam": {
+        "window": 7,
+        "max_messages": 5
+    }
 }
